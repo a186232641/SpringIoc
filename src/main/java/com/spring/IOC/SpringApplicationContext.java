@@ -1,6 +1,7 @@
 package com.spring.IOC;
 
 import com.spring.annotation.*;
+import com.spring.processor.InitializingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Controller;
 import org.springframework.util.StringUtils;
@@ -25,45 +26,7 @@ public class SpringApplicationContext {
     private ConcurrentHashMap<String, Object> singletonObjects = new ConcurrentHashMap<>();
 
     public SpringApplicationContext(Class configClass) {
-        this.configClass = configClass;
-        //拿到指定注解
-        ComponentScan declaredAnnotation = (ComponentScan) this.configClass.getDeclaredAnnotation(ComponentScan.class);
-        //获取注解的值
-        String path = declaredAnnotation.value();
-        //得到类加载器
-        ClassLoader classLoader = SpringApplicationContext.class.getClassLoader();
-        //通过类加载器获得扫描包的url
-        path = path.replace(".", "/");
-        //得到类加载路径，是用来获取指定路径下资源的 URL 的方法。
-        URL resource = classLoader.getResource(path);
-        File file = new File(resource.getFile());
-        if (file.isDirectory()) {
-            File[] files = file.listFiles();
-            for (File f : files) {
-                System.out.println("==============");
-                String absolutePath = f.getAbsolutePath();
-                String className = absolutePath.substring(absolutePath.lastIndexOf("/") + 1, absolutePath.indexOf(".class"));
-                String classFullName = path.replace("/", ".") + "." + className;
-                System.out.println(classFullName);
-                try {
-                    //Class.forName()，会调用静态方法;
-                    //classLoader.loadClass(classFullName);
-                    Class<?> aClass = classLoader.loadClass(classFullName);
-                    if (aClass.isAnnotationPresent(Component.class)) {
-                        Class<?> clazz = Class.forName(classFullName);
-                        Object instance = clazz.newInstance();
-                        ioc.put(className, instance);
 
-
-                    }
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-
-
-            }
-
-        }
 
     }
 
@@ -117,42 +80,46 @@ public class SpringApplicationContext {
 
         }
     }
-    private Object createbean(String beanName,BeanDefintion beanDefintion){
+
+    private Object createbean(String beanName, BeanDefintion beanDefintion) {
         Class clazz = beanDefintion.getClazz();
+        //设置属性值
         try {
             Object instance = clazz.getDeclaredConstructor().newInstance();
             for (Field declaredField : clazz.getDeclaredFields()) {
-            if(declaredField.isAnnotationPresent(Autowired.class)){
-                //3. 得到这个字段名字
-                String name = declaredField.getName();
-                //4. 通过getBean方法来获取要组装对象
-                Object bean = getBean(name);
-                //5. 进行组装
-                declaredField.setAccessible(true);
-                declaredField.set(instance,bean);
+                if (declaredField.isAnnotationPresent(Autowired.class)) {
+                    //3. 得到这个字段名字
+                    String name = declaredField.getName();
+                    //4. 通过getBean方法来获取要组装对象
+                    Object bean = getBean(name);
+                    //5. 进行组装
+                    declaredField.setAccessible(true);
+                    declaredField.set(instance, bean);
+                }
             }
+            //是否实现InitializingBean接口
+            if (instance instanceof InitializingBean) {
+                try {
+                    ((InitializingBean) instance).afterPropertiesSet();
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
             }
-
-
-        } catch (InstantiationException e) {
-            throw new RuntimeException(e);
-        } catch (IllegalAccessException e) {
-            throw new RuntimeException(e);
-        } catch (InvocationTargetException e) {
-            throw new RuntimeException(e);
-        } catch (NoSuchMethodException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        return null;
     }
-    public Object getBean(String name){
-        if(beanDefintionMap.containsKey(name)){
+
+    public Object getBean(String name) {
+        if (beanDefintionMap.containsKey(name)) {
             BeanDefintion beanDefintion = beanDefintionMap.get(name);
-            if("singleton".equalsIgnoreCase(beanDefintion.getScope())){
+            if ("singleton".equalsIgnoreCase(beanDefintion.getScope())) {
                 return singletonObjects.get(name);
-            }else{
-                return createbean(name,beanDefintion);
+            } else {
+                return createbean(name, beanDefintion);
             }
-        }else{
+        } else {
             throw new NullPointerException("没有该bean");
         }
     }
