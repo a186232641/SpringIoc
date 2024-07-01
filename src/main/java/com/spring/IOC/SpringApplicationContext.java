@@ -1,6 +1,7 @@
 package com.spring.IOC;
 
 import com.spring.annotation.*;
+import com.spring.processor.BeanPostProcessor;
 import com.spring.processor.InitializingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Controller;
@@ -11,6 +12,9 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -24,9 +28,19 @@ public class SpringApplicationContext {
     private final ConcurrentHashMap<String, Object> ioc = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, BeanDefintion> beanDefintionMap = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, Object> singletonObjects = new ConcurrentHashMap<>();
-
+    private List<BeanPostProcessor> beanPostProcessorList = new ArrayList<>();
     public SpringApplicationContext(Class configClass) {
+        beanDefintionsByScan(configClass);
+        Enumeration<String> keys = beanDefintionMap.keys();
+        while(keys.hasMoreElements()){
+            String beanName = keys.nextElement();
+            BeanDefintion beanDefintion = beanDefintionMap.get(beanName);
+            if("singleton".equalsIgnoreCase(beanDefintion.getScope())){
+                Object bean = createbean(beanName, beanDefintion);
+                singletonObjects.put(beanName,bean);
+            }
 
+        }
 
     }
 
@@ -56,6 +70,18 @@ public class SpringApplicationContext {
                         if (aClass.isAnnotationPresent(Component.class)) {
                             Component declaredAnnotation = aClass.getDeclaredAnnotation(Component.class);
                             String beanName = declaredAnnotation.value();
+                            //判断当前的这个clazz有没有实现BeanPostProcessor
+                            //说明, 这里我们不能使用 instanceof 来判断clazz是否实现了BeanPostProcessor
+                            //原因: clazz不是一个实例对象，而是一个类对象/clazz, 使用isAssignableFrom
+                            //小伙伴将其当做一个语法理解
+                            //这里其实是扫描到的实现BeanPostProcessor的方法，当然不是需要扫描的bean
+                            if(BeanPostProcessor.class.isAssignableFrom(aClass)){
+                                BeanPostProcessor beanPostProcessor = (BeanPostProcessor)aClass.newInstance();
+                                beanPostProcessorList.add(beanPostProcessor);
+                                continue;
+                            }
+
+
                             if ("".equals(beanName)) {
                                 beanName = StringUtils.uncapitalize(beanName);
                             }
@@ -70,7 +96,7 @@ public class SpringApplicationContext {
                             beanDefintionMap.put(beanName, beanDefintion);
                         }
 
-                    } catch (ClassNotFoundException e) {
+                    } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
 
@@ -97,14 +123,28 @@ public class SpringApplicationContext {
                     declaredField.set(instance, bean);
                 }
             }
-            //是否实现InitializingBean接口
-            if (instance instanceof InitializingBean) {
-                try {
-                    ((InitializingBean) instance).afterPropertiesSet();
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+            //bean前置处理器
+            for (BeanPostProcessor beanPostProcessor : beanPostProcessorList) {
+                Object current = beanPostProcessor.postProcessBeforeInitialization(instance, beanName);
+                if(current!=null){
+                    instance = current;
                 }
             }
+
+
+            //是否实现InitializingBean接口
+            if (instance instanceof InitializingBean) {
+                    ((InitializingBean) instance).afterPropertiesSet();
+
+            }
+            //bean后置处理器
+            for (BeanPostProcessor beanPostProcessor : beanPostProcessorList) {
+                Object current = beanPostProcessor.postProcessAfterInitialization(instance, beanName);
+                if(current!=null){
+                    instance = current;
+                }
+            }
+
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
